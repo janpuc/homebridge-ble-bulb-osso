@@ -8,7 +8,7 @@ module.exports = function(homebridge) {
     Service = homebridge.hap.Service;
     Characteristic = homebridge.hap.Characteristic;
 
-    homebridge.registerAccesory("BLEHomebridgePlugin", "BLELamp", BLElightAccessory);
+    homebridge.registerAccesory("homebridge-ble-bulb-osso", "BLELamp", BLElightAccessory);
 }
 
 function BLElightAccessory(log, config) {
