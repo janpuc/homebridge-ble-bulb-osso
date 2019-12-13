@@ -2,17 +2,18 @@ var Noble = require('@abandonware/noble');
 var Service, Characteristic;
 
 var BLELIGHTS_SERVICE = "cc02";
-var BLELIGHTS_RGB_CHARACTERISTIC = "ee03";
+var BLELIGHTS_RGB_CHARACTERISTIC_WRITE = "ee03";
+var BLELIGHTS_RGB_CHARACTERISTIC_READ = "ee01";
 
 module.exports = function(homebridge) {
     Service = homebridge.hap.Service;
     Characteristic = homebridge.hap.Characteristic;
 
-    homebridge.registerAccesory("homebridge-ble-bulb-osso", "BLELamp", BLElightAccessory);
+    homebridge.registerAccessory("homebridge-ble-bulb-osso", "BLELamp", BLElightAccessory);
 }
 
 function BLElightAccessory(log, config) {
-    this.log =log;
+    this.log = log;
     this.name = config["name"];
     this.address = config["address"];
     this.minBrightness = config["minBrightness"];
@@ -20,26 +21,27 @@ function BLElightAccessory(log, config) {
     this.lightService = new Service.Lightbulb(this.name);
 
     this.lightService
-        .getCharacteristic(new Characteristic.On) // bool
+        .getCharacteristic(Characteristic.On) // bool
         .on('set', this.setPowerState.bind(this))
         .on('get', this.getPowerState.bind(this));
 
     this.lightService
-        .getCharacteristic(new Characteristic.Brightness()) // int 0-100
+        .getCharacteristic(Characteristic.Brightness) // int 0-100
         .on('set', this.setBrightness.bind(this))
         .on('get', this.getBrightness.bind(this));
 
     this.lightService
-        .getCharacteristic(new Characteristic.Saturation()) // float 0-100
+        .getCharacteristic(Characteristic.Saturation) // float 0-100
         .on('set', this.setSaturation.bind(this))
         .on('get', this.getSaturation.bind(this));
 
     this.lightService
-        .getCharacteristic(new Characteristic.Hue()) // float 0-360
+        .getCharacteristic(Characteristic.Hue) // float 0-360
         .on('set', this.setHue.bind(this))
         .on('get', this.getHue.bind(this));
 
-    this.nobleCharacteristic = null;
+    this.nobleCharacteristicRead = null;
+    this.nobleCharacteristicWrite = null;
     Noble.on('stateChange', this.nobleStateChange.bind(this));
 
     this.readCallbacks = [];
@@ -156,9 +158,13 @@ BLElightAccessory.prototype.getHue = function(callback) {
 
 
 BLElightAccessory.prototype.nobleStateChange = function(state) {
-    if (state == "poweredOn") {
+    if (state === "poweredOn") {
         this.log.info("Starting Noble scan..");
-        Noble.startScanning([], false);
+        try {
+            Noble.startScanning([], false);
+        } catch (e) {
+            this.log.error(e);
+        }
         Noble.on('discover', this.nobleDiscovered.bind(this));
     } else {
         this.log.info("Noble state change to " + state + "; stopping scan.");
@@ -167,6 +173,7 @@ BLElightAccessory.prototype.nobleStateChange = function(state) {
 }
 
 BLElightAccessory.prototype.nobleDiscovered = function(accessory) {
+    this.log.debug("Accesory address: " + accessory.address);
     if (accessory.address == this.address) {
         this.log.info("Found accesory for " + this.name + ", connecting..");
         accessory.connect(function(error) {
@@ -196,6 +203,7 @@ BLElightAccessory.prototype.nobleDisconnected = function(error, accessory) {
 }
 
 BLElightAccessory.prototype.nobleServicesDicovered = function(error, services) {
+    this.log.info("Service discovered");
     if (error) return this.log.error("Noble services discovery failed: " + error);
     for (var service of services) {
         service.discoverCharacteristics([], this.nobleCharacteristicsDiscovered.bind(this));
@@ -203,18 +211,23 @@ BLElightAccessory.prototype.nobleServicesDicovered = function(error, services) {
 }
 
 BLElightAccessory.prototype.nobleCharacteristicsDiscovered = function(error, characteristics) {
+    this.log.info("Characteristic discovered")
     if (error) return this.log.error("Noble characteristics discovery failed: " + error);
     for (var characteristic of characteristics) {
-        if (Characteristic.uuid == BLELIGHTS_RGB_CHARACTERISTIC) {
+        if (characteristic.uuid == BLELIGHTS_RGB_CHARACTERISTIC_WRITE) {
             this.log.info("Found RGB Characteristic: " + characteristic.uuid);
-            this.nobleCharacteristic = characteristic;
+            this.nobleCharacteristicWrite = characteristic;
             Noble.stopScanning();
+        }
+        if (characteristic.uuid == BLELIGHTS_RGB_CHARACTERISTIC_READ) {
+            this.log.info("Found RGB Characteristic: " + characteristic.uuid);
+            this.nobleCharacteristicRead = characteristic;
         }
     }
 }
 
 BLElightAccessory.prototype.readFromBulb = function(callback) {
-    if (this.nobleCharacteristic == null) {
+    if (this.nobleCharacteristicRead == null) {
         this.log.warn("Characteristic not yet found. Skipping..");
         callback(false);
         return;
@@ -226,7 +239,7 @@ BLElightAccessory.prototype.readFromBulb = function(callback) {
             + " Adding callback to queue. (" + this.readCallbacks.length + ")");
     } else {
         this.log.debug("No callback queue, sending 'read' call to nobleCharacteristic");
-        this.nobleCharacteristic.read(function(error, buffer) {
+        this.nobleCharacteristicRead.read(function(error, buffer) {
             this.log.debug("Executing noble 'read' callback");
             if (error === null) {
                 this.log.debug("Got success response from characteristic");
@@ -258,7 +271,7 @@ BLElightAccessory.prototype.readFromBulb = function(callback) {
 }
 
 BLElightAccessory.prototype.writeToBulb = function(callback) {
-    if (this.nobleCharacteristic == null) {
+    if (this.nobleCharacteristicWrite == null) {
         this.log.warn("Characteristic not yet found. Skipping..");
         callback(false);
         return;
@@ -281,7 +294,7 @@ BLElightAccessory.prototype.writeToBulb = function(callback) {
     buffer.writeUInt8(this.powerState ? rgb.r : 0, 7);
     buffer.writeUInt8(0x00, 8);
     buffer.writeUInt8(0x00, 9);
-    this.nobleCharacteristic.write(buffer, false);
+    this.nobleCharacteristicWrite.write(buffer, false);
     callback();
 }
 
